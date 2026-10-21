@@ -1,6 +1,14 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -51,13 +59,26 @@ class Card(Base):
     card_type: Mapped[str] = mapped_column(String(20))
     source_quote: Mapped[str] = mapped_column(Text)
     prompt_version: Mapped[str] = mapped_column(String(20))
+
+    # Spaced-repetition state (SM-2), used later
     ease_factor: Mapped[float] = mapped_column(Float, default=2.5)
     interval_days: Mapped[int] = mapped_column(Integer, default=0)
     repetitions: Mapped[int] = mapped_column(Integer, default=0)
     due_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
+    # Set when a human edits the card; the original AI/PDF text is preserved
+    original_question: Mapped[str | None] = mapped_column(Text, default=None)
+    original_answer: Mapped[str | None] = mapped_column(Text, default=None)
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+
+    # Automatic warnings from quality checks (never changes the answer)
+    flags: Mapped[list] = mapped_column(JSON, default=list)
+
     chunk: Mapped["Chunk"] = relationship(back_populates="cards")
+    verifications: Mapped[list["CardVerification"]] = relationship(
+        back_populates="card", cascade="all, delete-orphan"
+    )
 
 
 class Review(Base):
@@ -70,3 +91,20 @@ class Review(Base):
     response_time_ms: Mapped[int | None] = mapped_column(Integer, default=None)
     interval_before: Mapped[int] = mapped_column(Integer, default=0)
     ease_before: Mapped[float] = mapped_column(Float, default=2.5)
+
+
+class CardVerification(Base):
+    """Result of an on-demand outside-source check. Never edits the card."""
+
+    __tablename__ = "card_verifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    card_id: Mapped[int] = mapped_column(ForeignKey("cards.id"), index=True)
+    # discrepancy / none_found / unable_to_verify
+    status: Mapped[str] = mapped_column(String(30))
+    explanation: Mapped[str] = mapped_column(Text)
+    # [{"title": "...", "url": "..."}]
+    sources: Mapped[list] = mapped_column(JSON, default=list)
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    card: Mapped["Card"] = relationship(back_populates="verifications")

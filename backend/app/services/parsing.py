@@ -2,26 +2,32 @@ from dataclasses import dataclass
 from pathlib import Path
 from docx import Document
 from pypdf import PdfReader
+import pdfplumber
 class ParsingError(Exception):
     """Raised when a file can't be read, with a message safe to show the user."""
 @dataclass
 class PageText:
     page_number: int
     text: str
+
 def parse_pdf(path: Path) -> list[PageText]:
     try:
-        reader = PdfReader(str(path))
-        if reader.is_encrypted:
-            raise ParsingError("This PDF is password-protected.")
-        pages = []
-        for number, page in enumerate(reader.pages, start=1):
-            text = (page.extract_text() or "").strip()
-            if text:
-                pages.append(PageText(page_number=number, text=text))
-    except ParsingError:
-        raise
+        with pdfplumber.open(str(path)) as pdf:
+            pages = []
+
+            for number, page in enumerate(pdf.pages, start=1):
+                text = (page.extract_text(layout=True) or "").strip()
+
+                if text:
+                    pages.append(
+                        PageText(page_number=number, text=text)
+                    )
+
     except Exception as e:
+        if isinstance(e, ParsingError):
+            raise
         raise ParsingError(f"Could not read this PDF: {e}")
+
     if not pages:
         raise ParsingError(
             "No text found. This looks like a scanned PDF (images only). "

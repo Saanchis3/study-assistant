@@ -7,7 +7,7 @@ from groq import Groq
 from app.config import GROQ_API_KEY, MODEL_NAME
 
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 
 class Card(BaseModel):
@@ -70,7 +70,13 @@ Do not add outside knowledge.
 
 Your goal is to make the material EASY TO STUDY, REMEMBER, and MEMORIZE for an exam.
 
-Create 3 to 8 high-quality flashcards from the most important information in the chunk.
+Create flashcards from the study material.
+
+If the material is a vocabulary list, create one separate flashcard
+for EVERY word and its definition in the chunk. Do not skip any words.
+
+If the material is general study notes, create 3 to 8 high-quality
+flashcards from the most important information.
 
 For every flashcard:
 
@@ -81,6 +87,10 @@ For every flashcard:
 2. ANSWER
 - Give a concise but complete answer that is easy to memorize.
 - Extract the KEY FACTS from the study material.
+- For definition cards, make the definition match the study material exactly in meaning; never guess or use an outside definition.
+- For vocabulary lists, treat each word and its definition as a separate entry.
+- Never combine a word's definition with the definition of a neighboring word, even if the extracted text appears continuous.
+- If you cannot confidently identify where a definition ends and the next word's definition begins, do not create a card for that word.
 - Include important:
   - dates or years
   - names of important people

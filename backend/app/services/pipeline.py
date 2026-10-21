@@ -1,3 +1,4 @@
+
 import logging
 import time
 
@@ -11,6 +12,7 @@ from app.services.card_generation import (
     CardGenerationError,
     generate_cards,
 )
+from app.services.quality_checks import flag_document
 
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,19 @@ def generate_cards_for_document(document_id: int) -> None:
 
         doc.status = "failed" if doc.failed_chunks == len(chunks) else "done"
         db.commit()
+
+        try:
+            flagged_count = flag_document(db, document_id)
+            logger.info(
+                "Document %d quality check complete: %d cards flagged",
+                document_id,
+                flagged_count,
+            )
+        except Exception:
+            logger.exception(
+                "Quality check failed for document %d",
+                document_id,
+            )
 
     except Exception as e:
         logger.exception("Document %d crashed", document_id)
