@@ -1,3 +1,4 @@
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
@@ -6,6 +7,9 @@ from app.db import get_db
 from app.models import Card
 from app.schemas import CardOut, CardUpdate
 from app.services.card_editing import apply_edit
+from app.services.quality_checks import flag_document
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/cards", tags=["cards"])
 
@@ -19,8 +23,6 @@ def get_card(card_id: int, db: Session = Depends(get_db)):
 
     return card
 
-
-@router.patch("/{card_id}", response_model=CardOut)
 
 @router.patch("/{card_id}", response_model=CardOut)
 def edit_card(
@@ -41,8 +43,8 @@ def edit_card(
         flag_document(db, card.chunk.document_id)
     except Exception:
         db.rollback()
-        # Keep the saved edit even if quality checks fail.
-        pass
+        # The edit is already saved; only the flag refresh failed.
+        logger.exception("Quality check failed for card %d", card_id)
 
     db.refresh(card)
     return card
