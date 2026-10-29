@@ -3,7 +3,7 @@ import re
 import time
 
 from pydantic import BaseModel
-from groq import Groq
+from groq import APIError, Groq
 
 from app.config import GROQ_API_KEY, MODEL_NAME
 from app.services.provider_errors import (
