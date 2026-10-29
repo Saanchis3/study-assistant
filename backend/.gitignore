@@ -1,0 +1,15 @@
+# Local test files
+cards_test*.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv/
+
+# Local database and backups
+study.db
+study_backup.db
+
+# Environment secrets
+.env

@@ -18,4 +18,9 @@ def test_missing_card_returns_404():
         r = client.get("/cards/999999")
 
     assert r.status_code == 404
-    
+def test_verify_missing_card_returns_404():
+    with TestClient(app) as client:
+        response = client.post("/cards/999999/verify")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Card not found."

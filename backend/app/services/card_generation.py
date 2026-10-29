@@ -1,13 +1,19 @@
 import json
 import re
+import time
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from groq import Groq
 
 from app.config import GROQ_API_KEY, MODEL_NAME
+from app.services.provider_errors import (
+    ProviderErrorKind,
+    classify_provider_error,
+)
 
 
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"
+RETRY_DELAY_SECONDS = 3
 
 
 class Card(BaseModel):
@@ -31,12 +37,15 @@ def _normalize(text: str) -> str:
 
 
 def quote_is_in_chunk(quote: str, chunk: str) -> bool:
-    """Check whether the source quote comes from the original chunk."""
-    return _normalize(quote) in _normalize(chunk)
+    """Check whether a non-empty source quote comes from the original chunk."""
+    return bool(quote.strip()) and _normalize(quote) in _normalize(chunk)
 
 
 def extract_json(text: str) -> str:
     """Extract a JSON object from an LLM response."""
+    if not text or not text.strip():
+        raise CardGenerationError("LLM returned an empty response.")
+
     text = text.strip()
 
     if text.startswith("```"):
@@ -174,6 +183,7 @@ Study material:
 
 {chunk}
 """
+
     response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
@@ -183,62 +193,36 @@ Study material:
             }
         ],
         temperature=0.2,
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "flashcard_batch",
-                "strict": True,
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "cards": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "question": {"type": "string"},
-                                    "answer": {"type": "string"},
-                                    "card_type": {
-                                        "type": "string",
-                                        "enum": [
-                                            "definition",
-                                            "concept",
-                                            "process",
-                                            "example",
-                                        ],
-                                    },
-                                    "source_quote": {"type": "string"},
-                                },
-                                "required": [
-                                    "question",
-                                    "answer",
-                                    "card_type",
-                                    "source_quote",
-                                ],
-                                "additionalProperties": False,
-                            },
-                        }
-                    },
-                    "required": ["cards"],
-                    "additionalProperties": False,
-                },
-            },
-        },
-        reasoning_format="hidden",
+        reasoning_effort="low",
+        include_reasoning=False,
+        max_completion_tokens=4096,
     )
 
-    return response.choices[0].message.content
+    choice = response.choices[0]
+    message = choice.message
+
+    if not message.content:
+        raise CardGenerationError(
+            f"Groq returned empty content. "
+            f"finish_reason={choice.finish_reason!r}, "
+            f"reasoning_present={bool(getattr(message, 'reasoning', None))}, "
+            f"refusal={getattr(message, 'refusal', None)!r}"
+        )
+
+    return message.content
 
 
 def generate_cards(chunk: str, max_retries: int = 2) -> list[Card]:
     """
     Generate validated flashcards from one document chunk.
     Invalid cards are filtered out.
+    Retries failed attempts with a delay.
     """
 
     last_error = None
+    attempts = max_retries + 1
 
-    for _ in range(max_retries + 1):
+    for attempt in range(attempts):
         try:
             raw_response = _ask_llm(chunk)
             json_text = extract_json(raw_response)
@@ -274,10 +258,36 @@ def generate_cards(chunk: str, max_retries: int = 2) -> list[Card]:
                 )
 
             return valid_cards
-
         except Exception as e:
             last_error = e
 
+            # Only Groq errors are classified. Bad JSON, validation errors and
+            # "no valid cards" are model-output problems, so they just retry.
+            if isinstance(e, APIError):
+                decision = classify_provider_error(e)
+
+                if decision.kind == ProviderErrorKind.DAILY_QUOTA_EXHAUSTED:
+                    raise CardGenerationError(
+                        f"Groq daily quota exhausted: {decision.message}"
+                    ) from e
+
+                if decision.kind in (
+                    ProviderErrorKind.TEMPORARY_RATE_LIMIT,
+                    ProviderErrorKind.UNKNOWN,
+                ):
+                    raise CardGenerationError(
+                        f"Groq rate limit or unknown provider error: {decision.message}"
+                    ) from e
+
+                if decision.kind == ProviderErrorKind.PERMANENT_ERROR:
+                    raise CardGenerationError(
+                        f"Groq provider error: {decision.message}"
+                    ) from e
+
+            # Transient provider errors and model-output errors: retry
+            if attempt < attempts - 1:
+                time.sleep(RETRY_DELAY_SECONDS)
+
     raise CardGenerationError(
         f"Failed to generate valid flashcards: {last_error}"
-    )
+    ) from last_error
